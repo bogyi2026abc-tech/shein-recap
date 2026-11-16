@@ -1,31 +1,31 @@
 from pathlib import Path
 from uuid import uuid4
-import json, os, re, shutil, subprocess
+import asyncio, os, subprocess
 
+import edge_tts
 import imageio_ffmpeg
+from google import genai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI
 
 BASE = Path(__file__).resolve().parent
-UPLOADS = BASE / "uploads"
-OUTPUTS = BASE / "outputs"
-STATIC = BASE / "static"
+UPLOADS, OUTPUTS, STATIC = BASE / "uploads", BASE / "outputs", BASE / "static"
 FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 for folder in (UPLOADS, OUTPUTS, STATIC):
     folder.mkdir(exist_ok=True)
 
-app = FastAPI(title="SHEIN RECAP", version="0.2.1")
+app = FastAPI(title="SHEIN RECAP", version="0.3.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 MAX_UPLOAD = 500 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-def client():
-    key = os.getenv("OPENAI_API_KEY")
+def ai_client():
+    key = os.getenv("GEMINI_API_KEY")
     if not key:
-        raise HTTPException(503, "OPENAI_API_KEY ကို Render Environment မှာ ထည့်ပေးပါ။")
-    return OpenAI(api_key=key)
+        raise HTTPException(503, "GEMINI_API_KEY ကို Render Environment မှာ ထည့်ပေးပါ။ Google AI Studio မှာ အခမဲ့ API Key ရယူနိုင်ပါတယ်။")
+    return genai.Client(api_key=key)
 
 def run_cmd(args):
     if args and args[0] == "ffmpeg":
@@ -41,30 +41,42 @@ def run_cmd(args):
     return p.stdout
 
 def get_audio(video: Path, out: Path):
-    run_cmd(["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", str(out)])
+    run_cmd(["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(out)])
     return out
 
 def transcribe(audio: Path):
-    if audio.stat().st_size > 24 * 1024 * 1024:
-        smaller = audio.with_name(audio.stem + "_small.mp3")
-        run_cmd(["ffmpeg", "-y", "-i", str(audio), "-b:a", "48k", "-ac", "1", str(smaller)])
-        audio = smaller
-    with audio.open("rb") as f:
-        result = client().audio.transcriptions.create(model="gpt-4o-mini-transcribe", file=f)
-    return result.text
+    client = ai_client()
+    uploaded = None
+    try:
+        uploaded = client.files.upload(file=str(audio))
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[uploaded, "ဒီအသံဖိုင်ထဲက ပြောစကားအားလုံးကို မူရင်းဘာသာစကားအတိုင်း တိတိကျကျ စာသားပြောင်းပေးပါ။ အကျဉ်းမချုပ်ပါနှင့်။ စကားမကြားရသည့်နေရာကို မခန့်မှန်းပါနှင့်။"]
+        )
+        return (response.text or "").strip()
+    except Exception as exc:
+        raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
+    finally:
+        if uploaded is not None:
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:
+                pass
 
 def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖွယ်၊ သဘာဝကျတဲ့ စကားပြောဟန်"):
     prompt = f"""အောက်ပါ ရုပ်ရှင်ဇာတ်လမ်း transcript ကို မြန်မာဘာသာနဲ့ TikTok movie recap narration အဖြစ် ပြန်ရေးပါ။
-လိုအပ်ချက်များ - အစမှာ အားကောင်းတဲ့ hook ပါစေ၊ ဇာတ်လမ်းအစဉ်လိုက်နဲ့ အဓိကအချက်တွေ မပျောက်စေပါနဲ့၊ တိုက်ရိုက်ဘာသာပြန်သလို မဖြစ်ဘဲ မြန်မာလူတစ်ယောက် ပြောပြနေသလို သဘာဝကျပါစေ၊ နောက်ဆုံးမှာ စိတ်ဝင်စားစရာ ending hook ထည့်ပါ၊ အင်္ဂလိပ်စကားလုံးတွေ မလိုအပ်ဘဲ မသုံးပါနဲ့။
+လိုအပ်ချက်များ - အစမှာ အားကောင်းတဲ့ hook ပါစေ၊ ဇာတ်လမ်းအစဉ်လိုက်နဲ့ အဓိကအချက်တွေ မပျောက်စေပါနဲ့၊ တိုက်ရိုက်ဘာသာပြန်သလို မဖြစ်ဘဲ မြန်မာလူတစ်ယောက် ပါးစပ်က ပြောပြနေသလို သဘာဝကျပြီး ချောမွေ့ပါစေ၊ နောက်ဆုံးမှာ စိတ်ဝင်စားစရာ ending hook ထည့်ပါ၊ အင်္ဂလိပ်စကားလုံးတွေ မလိုအပ်ဘဲ မသုံးပါနဲ့။
 ဟန်ပန်: {style}
 Transcript:
 {transcript[:90000]}"""
-    response = client().chat.completions.create(
-        model=os.getenv("OPENAI_TEXT_MODEL", "gpt-4o-mini"),
-        messages=[{"role":"system","content":"သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။"},{"role":"user","content":prompt}],
-        temperature=0.7
-    )
-    return response.choices[0].message.content or ""
+    try:
+        response = ai_client().models.generate_content(
+            model=MODEL,
+            contents="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
+        )
+        return (response.text or "").strip()
+    except Exception as exc:
+        raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
 
 @app.get("/")
 async def home():
@@ -72,7 +84,7 @@ async def home():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "app": "SHEIN RECAP", "version": "0.2.1", "ffmpeg": Path(FFMPEG).is_file(), "ai_ready": bool(os.getenv("OPENAI_API_KEY"))}
+    return {"ok": True, "app": "SHEIN RECAP", "version": "0.3.0", "ffmpeg": Path(FFMPEG).is_file(), "ai_ready": bool(os.getenv("GEMINI_API_KEY")), "ai_provider": "Google Gemini Free Tier", "tts": "Microsoft Edge Burmese voices"}
 
 @app.post("/api/upload")
 async def upload_video(video: UploadFile = File(...)):
@@ -103,21 +115,20 @@ async def create_recap(youtube_url: str = Form(""), file_id: str = Form(""), sty
         matches = list(UPLOADS.glob(file_id + ".*"))
         if not matches:
             raise HTTPException(404, "တင်ထားတဲ့ Video ကို ရှာမတွေ့ပါ။ ပြန်တင်ပေးပါ။")
-        video = matches[0]
-        audio = get_audio(video, work / "audio.mp3")
+        audio = get_audio(matches[0], work / "audio.mp3")
     elif youtube_url:
-        if not (youtube_url.strip().lower().startswith(("https://youtube.com/", "http://youtube.com/", "https://www.youtube.com/", "http://www.youtube.com/", "https://youtu.be/", "http://youtu.be/"))):
+        if not youtube_url.strip().lower().startswith(("https://youtube.com/", "http://youtube.com/", "https://www.youtube.com/", "http://www.youtube.com/", "https://youtu.be/", "http://youtu.be/")):
             raise HTTPException(400, "YouTube link မှန်ကန်စွာ ထည့်ပေးပါ။")
         downloaded = work / "source.%(ext)s"
         run_cmd(["yt-dlp", "--no-playlist", "--ffmpeg-location", FFMPEG, "-f", "bestaudio/best", "-x", "--audio-format", "mp3", "-o", str(downloaded), youtube_url.strip()])
         audios = list(work.glob("source.*"))
         if not audios:
-            raise HTTPException(500, "YouTube အသံကို ရယူမရပါ။ Video ရဲ့ subtitle ရှိ/မရှိ စစ်ဆေးပါ။")
+            raise HTTPException(500, "YouTube အသံကို ရယူမရပါ။")
         audio = audios[0]
     else:
         raise HTTPException(400, "YouTube link သို့မဟုတ် Upload လုပ်ထားတဲ့ Video တစ်ခု ရွေးပေးပါ။")
     transcript = transcribe(audio)
-    if not transcript.strip():
+    if not transcript:
         raise HTTPException(422, "အသံထဲက စကားကို မဖတ်နိုင်ပါ။")
     script = make_script(transcript, style)
     (work / "transcript.txt").write_text(transcript, encoding="utf-8")
@@ -125,16 +136,21 @@ async def create_recap(youtube_url: str = Form(""), file_id: str = Form(""), sty
     return {"ok": True, "job_id": work_id, "transcript": transcript, "script": script}
 
 @app.post("/api/speech")
-async def create_speech(script: str = Form(...), voice: str = Form("onyx"), speed: float = Form(1.0), tone: str = Form("သဘာဝကျပြီး ရှင်းလင်းသော အသံ")):
+async def create_speech(script: str = Form(...), voice: str = Form("my-MM-ThihaNeural"), speed: float = Form(1.0), tone: str = Form("သဘာဝကျပြီး ရှင်းလင်းသော အသံ")):
     if not script.strip():
         raise HTTPException(400, "အသံဖန်တီးရန် စာသားထည့်ပေးပါ။")
-    if voice not in {"alloy","ash","coral","echo","fable","onyx","nova","sage","shimmer"}:
-        raise HTTPException(400, "ရွေးထားတဲ့ အသံအမျိုးအစား မမှန်ပါ။")
+    voices = {"my-MM-ThihaNeural", "my-MM-NilarNeural"}
+    if voice not in voices:
+        raise HTTPException(400, "ရွေးထားတဲ့ မြန်မာအသံအမျိုးအစား မမှန်ပါ။")
     if not 0.7 <= speed <= 1.3:
         raise HTTPException(400, "အသံအမြန်နှုန်းကို 0.7 မှ 1.3 အတွင်းထားပါ။")
     output = OUTPUTS / f"{uuid4().hex}.mp3"
-    speech = client().audio.speech.create(model="gpt-4o-mini-tts", voice=voice, input=script[:12000], speed=speed, instructions=tone)
-    speech.stream_to_file(output)
+    rate = f"{round((speed - 1) * 100):+d}%"
+    try:
+        communicate = edge_tts.Communicate(script[:12000], voice, rate=rate)
+        await communicate.save(str(output))
+    except Exception as exc:
+        raise HTTPException(502, f"အခမဲ့ မြန်မာအသံဖန်တီးရာမှာ ချိတ်ဆက်မှုအမှားဖြစ်နေပါတယ်: {str(exc)[:400]}")
     return {"ok": True, "audio_url": f"/api/file/{output.name}"}
 
 @app.get("/api/file/{filename}")
