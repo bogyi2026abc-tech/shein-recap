@@ -182,6 +182,28 @@ async def create_recap(youtube_url: str = Form(""), file_id: str = Form(""), sty
     (work / "recap.txt").write_text(script, encoding="utf-8")
     return {"ok": True, "job_id": work_id, "transcript": transcript, "script": script}
 
+def group_word_boundaries(words):
+    segments = []
+    current = []
+    start = 0.0
+    end = 0.0
+    for word in words:
+        token = word["text"]
+        if not current:
+            start = word["start"]
+        current.append(token)
+        end = max(end, word["end"])
+        joined = "".join(current).strip()
+        # Keep captions short and readable; split at punctuation or about 6 words.
+        if len(current) >= 6 or any(joined.endswith(mark) for mark in ("။", "?", "!", ",", "၊", ";", ":")):
+            text = " ".join(current).replace(" ၊", "၊").replace(" ။", "။")
+            segments.append({"start": round(start, 3), "end": round(max(end, start + 0.35), 3), "text": text})
+            current = []
+    if current:
+        text = " ".join(current).replace(" ၊", "၊").replace(" ။", "။")
+        segments.append({"start": round(start, 3), "end": round(max(end, start + 0.45), 3), "text": text})
+    return segments
+
 @app.post("/api/speech")
 async def create_speech(script: str = Form(...), voice: str = Form("my-MM-ThihaNeural"), speed: float = Form(1.0), tone: str = Form("သဘာဝကျပြီး ရှင်းလင်းသော အသံ")):
     if not script.strip():
@@ -191,14 +213,28 @@ async def create_speech(script: str = Form(...), voice: str = Form("my-MM-ThihaN
         raise HTTPException(400, "ရွေးထားတဲ့ မြန်မာအသံအမျိုးအစား မမှန်ပါ။")
     if not 0.7 <= speed <= 1.3:
         raise HTTPException(400, "အသံအမြန်နှုန်းကို 0.7 မှ 1.3 အတွင်းထားပါ။")
-    output = OUTPUTS / f"{uuid4().hex}.mp3"
+    speech_id = uuid4().hex
+    output = OUTPUTS / f"{speech_id}.mp3"
     rate = f"{round((speed - 1) * 100):+d}%"
+    words = []
     try:
         communicate = edge_tts.Communicate(script[:12000], voice, rate=rate)
-        await communicate.save(str(output))
+        with output.open("wb") as audio_file:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    audio_file.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    offset = chunk.get("offset", 0) / 10_000_000
+                    duration = chunk.get("duration", 0) / 10_000_000
+                    words.append({"start": max(0.0, offset), "end": max(0.0, offset + duration), "text": chunk.get("text", "")})
+        if not words:
+            raise RuntimeError("TTS က စာလုံးအချိန်အချက်အလက် မပေးခဲ့ပါ။")
     except Exception as exc:
-        raise HTTPException(502, f"အခမဲ့ မြန်မာအသံဖန်တီးရာမှာ ချိတ်ဆက်မှုအမှားဖြစ်နေပါတယ်: {str(exc)[:400]}")
-    return {"ok": True, "audio_url": f"/api/file/{output.name}"}
+        output.unlink(missing_ok=True)
+        raise HTTPException(502, f"အသံနဲ့ Subtitle အချိန်ကိုက်ဖန်တီးရာမှာ အမှားဖြစ်နေပါတယ်: {str(exc)[:400]}")
+    segments = group_word_boundaries(words)
+    (OUTPUTS / f"{speech_id}.json").write_text(__import__("json").dumps(segments, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True, "speech_id": speech_id, "audio_url": f"/api/file/{output.name}", "segments": segments}
 
 @app.get("/api/file/{filename}")
 async def get_file(filename: str):
@@ -219,7 +255,7 @@ async def thumbnail(file_id: str = Form(...), second: float = Form(1.0)):
     return {"ok": True, "image_url": f"/api/file/{output.name}"}
 
 @app.post("/api/export")
-async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), subtitle_overlay: UploadFile | None = File(None)):
+async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), subtitle_overlay: UploadFile | None = File(None), speech_id: str = Form("")):
     matches = list(UPLOADS.glob(file_id + ".*"))
     if not matches:
         raise HTTPException(404, "Video မတွေ့ပါ။")
@@ -232,18 +268,32 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         with overlay_path.open("wb") as f:
             while chunk := await subtitle_overlay.read(1024 * 1024):
                 f.write(chunk)
+    speech_path = None
+    if speech_id:
+        if not speech_id.isalnum() or len(speech_id) != 32:
+            raise HTTPException(400, "Speech ID မမှန်ပါ။")
+        candidate = OUTPUTS / f"{speech_id}.mp3"
+        if not candidate.is_file():
+            raise HTTPException(404, "ဖန်တီးထားတဲ့ AI အသံဖိုင် မတွေ့ပါ။ အသံပြန်ဖန်တီးပေးပါ။")
+        speech_path = candidate
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start
-    if overlay_path and has_blur:
-        graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[withblur];[1:v]format=rgba[sub];[withblur][sub]overlay=0:0[outv]"
-        run_cmd(["ffmpeg","-y","-i",str(source),"-i",str(overlay_path),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
-    elif overlay_path:
-        graph = f"[0:v]{base_filter}[base];[1:v]format=rgba[sub];[base][sub]overlay=0:0[outv]"
-        run_cmd(["ffmpeg","-y","-i",str(source),"-i",str(overlay_path),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
-    elif has_blur:
+    args = ["ffmpeg", "-y", "-i", str(source)]
+    audio_input = "0:a?"
+    if speech_path:
+        args += ["-i", str(speech_path)]
+        audio_input = "1:a"
+    if overlay_path:
+        args += ["-i", str(overlay_path)]
+    if has_blur:
         graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[outv]"
-        run_cmd(["ffmpeg","-y","-i",str(source),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+        args += ["-filter_complex", graph, "-map", "[outv]"]
+    elif overlay_path:
+        graph = f"[0:v]{base_filter}[outv]"
+        args += ["-filter_complex", graph, "-map", "[outv]"]
     else:
-        run_cmd(["ffmpeg","-y","-i",str(source),"-vf",base_filter,"-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+        args += ["-vf", base_filter]
+    args += ["-map", audio_input, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", str(output)]
+    run_cmd(args)
     if overlay_path:
         overlay_path.unlink(missing_ok=True)
-    return {"ok": True, "video_url": f"/api/file/{output.name}"}
+    return {"ok": True, "video_url": f"/api/file/{output.name}", "narration_audio_used": bool(speech_path)}
