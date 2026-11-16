@@ -100,17 +100,31 @@ def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖ
 Transcript:
 {transcript[:90000]}"""
     client = ai_client()
+    primary_model = MODEL
+    fallback_model = os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.5-flash")
     try:
-        # Use the standard Generate Content endpoint rather than Interactions.
-        # This avoids the SDK's closed-client error on some Render deployments.
-        response = client.models.generate_content(
-            model=MODEL,
-            contents="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
-        )
-        script = (response.text or "").strip()
-        if not script:
+        prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\\n\\n" + prompt
+        try:
+            response = client.models.generate_content(model=primary_model, contents=prompt_text)
+            script = (response.text or "").strip()
+            if script:
+                return script
             raise RuntimeError("Gemini က Recap စာသားအလွတ် ပြန်ပေးခဲ့ပါတယ်။")
-        return script
+        except Exception as primary_error:
+            # If the primary model is temporarily overloaded, switch immediately
+            # to a second supported model instead of making the user wait on retries.
+            if fallback_model == primary_model:
+                raise
+            try:
+                response = client.models.generate_content(model=fallback_model, contents=prompt_text)
+                script = (response.text or "").strip()
+                if script:
+                    return script
+                raise RuntimeError("Fallback model က Recap စာသားအလွတ် ပြန်ပေးခဲ့ပါတယ်။")
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"Primary model {primary_model} failed: {primary_error}; fallback model {fallback_model} failed: {fallback_error}"
+                ) from fallback_error
     except Exception as exc:
         raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
     finally:
