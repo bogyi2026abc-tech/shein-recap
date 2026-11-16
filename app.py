@@ -42,7 +42,7 @@ def run_cmd(args):
     return p.stdout
 
 def get_audio(video: Path, out: Path):
-    run_cmd(["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(out)])
+    run_cmd(["ffmpeg", "-y", "-threads", "0", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "32k", str(out)])
     return out
 
 def _is_temporary_ai_error(exc):
@@ -50,44 +50,49 @@ def _is_temporary_ai_error(exc):
     return any(token in message for token in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL", "TIMEOUT", "DEADLINE"))
 
 def transcribe(audio: Path):
+    # Upload the audio once, then reuse it for the primary model and one fallback.
     models = []
-    for model in (TRANSCRIBE_MODEL, os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash"), "gemini-3.5-flash-lite", "gemini-3.8-flash"):
+    for model in (TRANSCRIBE_MODEL, os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash")):
         if model and model not in models:
             models.append(model)
     errors = []
-    for model in models:
-        for attempt, delay in enumerate((0, 2, 5), start=1):
-            if delay:
-                time.sleep(delay)
-            client = ai_client()
-            uploaded = None
-            try:
-                uploaded = client.files.upload(file=str(audio))
-                response = client.models.generate_content(model=model, contents=[
-                    uploaded,
-                    "Transcribe all spoken words accurately in the original language. Detect the spoken language automatically. Return only the transcript."
-                ])
-                transcript = (response.text or "").strip()
-                if transcript:
-                    return transcript
-                errors.append(f"{model}: empty transcript")
-                break
-            except Exception as exc:
-                errors.append(f"{model} attempt {attempt}: {str(exc)[:180]}")
-                if not _is_temporary_ai_error(exc):
-                    break
-            finally:
-                if uploaded is not None:
-                    try:
-                        client.files.delete(name=uploaded.name)
-                    except Exception:
-                        pass
+    client = ai_client()
+    uploaded = None
+    try:
+        uploaded = client.files.upload(file=str(audio))
+        for model in models:
+            for attempt, delay in enumerate((0, 2), start=1):
+                if delay:
+                    time.sleep(delay)
                 try:
-                    client.close()
-                except Exception:
-                    pass
-    details = " | ".join(errors[-6:])
+                    response = client.models.generate_content(model=model, contents=[
+                        uploaded,
+                        "Transcribe all spoken words accurately in the original language. Detect the spoken language automatically. Return only the transcript."
+                    ])
+                    transcript = (response.text or "").strip()
+                    if transcript:
+                        return transcript
+                    errors.append(f"{model}: empty transcript")
+                    break
+                except Exception as exc:
+                    errors.append(f"{model} attempt {attempt}: {str(exc)[:180]}")
+                    if not _is_temporary_ai_error(exc):
+                        break
+    except Exception as exc:
+        errors.append(f"audio upload: {str(exc)[:180]}")
+    finally:
+        if uploaded is not None:
+            try:
+                client.files.delete(name=uploaded.name)
+            except Exception:
+                pass
+        try:
+            client.close()
+        except Exception:
+            pass
+    details = " | ".join(errors[-4:])
     raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini မော်ဒယ်များ မရနိုင်သေးပါ: {details[:650]}")
+
 
 def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖွယ်၊ သဘာဝကျတဲ့ စကားပြောဟန်"):
     prompt = f"""အောက်ပါ ရုပ်ရှင်ဇာတ်လမ်း transcript ကို မြန်မာဘာသာနဲ့ TikTok movie recap narration အဖြစ် ပြန်ရေးပါ။
@@ -97,33 +102,35 @@ Transcript:
 {transcript[:90000]}"""
     prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
     models = []
-    for model in (MODEL, os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.8-flash"), "gemini-3.5-flash", "gemini-3.1-flash-lite"):
+    for model in (MODEL, os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.8-flash")):
         if model and model not in models:
             models.append(model)
     errors = []
-    for model in models:
-        for attempt, delay in enumerate((0, 2, 5), start=1):
-            if delay:
-                time.sleep(delay)
-            client = ai_client()
-            try:
-                response = client.models.generate_content(model=model, contents=prompt_text)
-                script = (response.text or "").strip()
-                if script:
-                    return script
-                errors.append(f"{model}: empty response")
-                break
-            except Exception as exc:
-                errors.append(f"{model} attempt {attempt}: {str(exc)[:180]}")
-                if not _is_temporary_ai_error(exc):
-                    break
-            finally:
+    client = ai_client()
+    try:
+        for model in models:
+            for attempt, delay in enumerate((0, 2), start=1):
+                if delay:
+                    time.sleep(delay)
                 try:
-                    client.close()
-                except Exception:
-                    pass
-    details = " | ".join(errors[-6:])
+                    response = client.models.generate_content(model=model, contents=prompt_text)
+                    script = (response.text or "").strip()
+                    if script:
+                        return script
+                    errors.append(f"{model}: empty response")
+                    break
+                except Exception as exc:
+                    errors.append(f"{model} attempt {attempt}: {str(exc)[:180]}")
+                    if not _is_temporary_ai_error(exc):
+                        break
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    details = " | ".join(errors[-4:])
     raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini မော်ဒယ်များ မရနိုင်သေးပါ: {details[:650]}")
+
 
 @app.get("/")
 async def home():
@@ -279,8 +286,11 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         frame_paths.append(path)
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start
     args = ["ffmpeg", "-y", "-i", str(source)]
+    speech_path = OUTPUTS / f"{speech_id}.mp3" if speech_id else None
     audio_input = "0:a?"
     if speech_path:
+        if not speech_path.is_file():
+            raise HTTPException(404, "AI အသံဖိုင် မတွေ့ပါ။ အသံကို ပြန်ဖန်တီးပေးပါ။")
         args += ["-i", str(speech_path)]
         audio_input = "1:a"
     for path in frame_paths:
