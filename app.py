@@ -103,7 +103,7 @@ Transcript:
     primary_model = MODEL
     fallback_model = os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.5-flash")
     try:
-        prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\\n\\n" + prompt
+        prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
         try:
             response = client.models.generate_content(model=primary_model, contents=prompt_text)
             script = (response.text or "").strip()
