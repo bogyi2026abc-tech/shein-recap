@@ -50,15 +50,42 @@ def transcribe(audio: Path):
     uploaded = None
     try:
         uploaded = client.files.upload(file=str(audio))
-        response = client.interactions.create(
-            model=TRANSCRIBE_MODEL,
-            input=[
-                {"type": "audio", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
-            ]
-        )
-        return (response.output_text or "").strip()
+        # Use the documented Generate Content endpoint for the dedicated
+        # transcription model. Some API-key/project configurations return
+        # 404 from the newer Interactions endpoint even when the model exists.
+        try:
+            response = client.models.generate_content(
+                model=TRANSCRIBE_MODEL,
+                contents=[
+                    uploaded,
+                    "Transcribe all spoken words accurately. Detect the spoken language automatically. Return only the transcript."
+                ],
+            )
+            transcript = (response.text or "").strip()
+            if transcript:
+                return transcript
+        except Exception as primary_error:
+            # Compatibility fallback: a general Gemini audio model can still
+            # transcribe the uploaded audio if the dedicated model is unavailable.
+            try:
+                response = client.models.generate_content(
+                    model=os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash"),
+                    contents=[
+                        uploaded,
+                        "Transcribe all spoken words accurately in the original language. Return only the transcript."
+                    ],
+                )
+                transcript = (response.text or "").strip()
+                if transcript:
+                    return transcript
+            except Exception as fallback_error:
+                raise RuntimeError(
+                    f"Dedicated transcription failed: {primary_error}; fallback failed: {fallback_error}"
+                ) from fallback_error
+            raise RuntimeError(f"Transcription returned empty text. Primary error: {primary_error}")
+        raise RuntimeError("Gemini returned an empty transcript.")
     except Exception as exc:
-        raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
+        raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:700]}")
     finally:
         if uploaded is not None:
             try:
