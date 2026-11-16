@@ -99,14 +99,25 @@ def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖ
 ဟန်ပန်: {style}
 Transcript:
 {transcript[:90000]}"""
+    client = ai_client()
     try:
-        response = ai_client().interactions.create(
+        # Use the standard Generate Content endpoint rather than Interactions.
+        # This avoids the SDK's closed-client error on some Render deployments.
+        response = client.models.generate_content(
             model=MODEL,
-            input="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
+            contents="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\\n\\n" + prompt
         )
-        return (response.output_text or "").strip()
+        script = (response.text or "").strip()
+        if not script:
+            raise RuntimeError("Gemini က Recap စာသားအလွတ် ပြန်ပေးခဲ့ပါတယ်။")
+        return script
     except Exception as exc:
         raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
 
 @app.get("/")
 async def home():
