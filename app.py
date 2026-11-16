@@ -19,7 +19,7 @@ app = FastAPI(title="SHEIN RECAP", version="0.3.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 MAX_UPLOAD = 500 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 def ai_client():
     key = os.getenv("GEMINI_API_KEY")
@@ -49,11 +49,14 @@ def transcribe(audio: Path):
     uploaded = None
     try:
         uploaded = client.files.upload(file=str(audio))
-        response = client.models.generate_content(
+        response = client.interactions.create(
             model=MODEL,
-            contents=[uploaded, "ဒီအသံဖိုင်ထဲက ပြောစကားအားလုံးကို မူရင်းဘာသာစကားအတိုင်း တိတိကျကျ စာသားပြောင်းပေးပါ။ အကျဉ်းမချုပ်ပါနှင့်။ စကားမကြားရသည့်နေရာကို မခန့်မှန်းပါနှင့်။"]
+            input=[
+                {"type": "text", "text": "ဒီအသံဖိုင်ထဲက ပြောစကားအားလုံးကို မူရင်းဘာသာစကားအတိုင်း တိတိကျကျ စာသားပြောင်းပေးပါ။ အကျဉ်းမချုပ်ပါနှင့်။ စကားမကြားရသည့်နေရာကို မခန့်မှန်းပါနှင့်။"},
+                {"type": "audio", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
+            ]
         )
-        return (response.text or "").strip()
+        return (response.output_text or "").strip()
     except Exception as exc:
         raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
     finally:
@@ -70,11 +73,11 @@ def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖ
 Transcript:
 {transcript[:90000]}"""
     try:
-        response = ai_client().models.generate_content(
+        response = ai_client().interactions.create(
             model=MODEL,
-            contents="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
+            input="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
         )
-        return (response.text or "").strip()
+        return (response.output_text or "").strip()
     except Exception as exc:
         raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
 
