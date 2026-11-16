@@ -20,6 +20,7 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 MAX_UPLOAD = 500 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+TRANSCRIBE_MODEL = os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
 
 def ai_client():
     key = os.getenv("GEMINI_API_KEY")
@@ -50,9 +51,8 @@ def transcribe(audio: Path):
     try:
         uploaded = client.files.upload(file=str(audio))
         response = client.interactions.create(
-            model=MODEL,
+            model=TRANSCRIBE_MODEL,
             input=[
-                {"type": "text", "text": "ဒီအသံဖိုင်ထဲက ပြောစကားအားလုံးကို မူရင်းဘာသာစကားအတိုင်း တိတိကျကျ စာသားပြောင်းပေးပါ။ အကျဉ်းမချုပ်ပါနှင့်။ စကားမကြားရသည့်နေရာကို မခန့်မှန်းပါနှင့်။"},
                 {"type": "audio", "uri": uploaded.uri, "mime_type": uploaded.mime_type}
             ]
         )
