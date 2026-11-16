@@ -105,7 +105,7 @@ Transcript:
         # This avoids the SDK's closed-client error on some Render deployments.
         response = client.models.generate_content(
             model=MODEL,
-            contents="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\\n\\n" + prompt
+            contents="သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
         )
         script = (response.text or "").strip()
         if not script:
