@@ -234,10 +234,10 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
                 f.write(chunk)
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start
     if overlay_path and has_blur:
-        graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[withblur];[1:v]format=rgba[sub];[withblur][sub]overlay=0:0:shortest=1[outv]"
+        graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[withblur];[1:v]format=rgba[sub];[withblur][sub]overlay=0:0[outv]"
         run_cmd(["ffmpeg","-y","-i",str(source),"-i",str(overlay_path),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
     elif overlay_path:
-        graph = f"[0:v]{base_filter}[base];[1:v]format=rgba[sub];[base][sub]overlay=0:0:shortest=1[outv]"
+        graph = f"[0:v]{base_filter}[base];[1:v]format=rgba[sub];[base][sub]overlay=0:0[outv]"
         run_cmd(["ffmpeg","-y","-i",str(source),"-i",str(overlay_path),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
     elif has_blur:
         graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[outv]"
