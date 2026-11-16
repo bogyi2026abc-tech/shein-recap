@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="my">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#090b18">
+<title>SHEIN RECAP — AI Workspace</title>
+<style>
+:root{color-scheme:dark;--bg:#090b18;--panel:#12172a;--line:#29314c;--muted:#9aa6c5;--cyan:#5ee7f5;--violet:#9b8cff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#24204c 0,transparent 42%),radial-gradient(ellipse at 100% 25%,#103647 0,transparent 34%),var(--bg);color:#f5f7ff;font:15px system-ui,-apple-system,sans-serif;min-height:100vh}
+.wrap{max-width:1120px;margin:auto;padding:22px}.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:28px}.brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:1.5px}.logo{width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,var(--violet),var(--cyan));display:grid;place-items:center;color:#080b18;font-weight:1000;font-size:20px;box-shadow:0 8px 30px #5ee7f544}.pill{border:1px solid #4b5473;border-radius:99px;padding:7px 12px;color:#c8d2f0;font-size:11px;letter-spacing:1px}
+.hero{padding:30px 0 22px}.eyebrow{color:var(--cyan);font-size:11px;font-weight:800;letter-spacing:2px}.hero h1{font-size:clamp(30px,6vw,54px);line-height:1.12;margin:12px 0}.hero p{color:var(--muted);max-width:650px;line-height:1.8;margin:0}
+.grid{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}.panel{background:linear-gradient(145deg,#171d34ee,#101527ee);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 18px 60px #0003}.panel h2{font-size:17px;margin:0 0 8px}.sub{color:var(--muted);font-size:13px;margin:0 0 18px}.tabs{display:flex;gap:8px;margin-bottom:16px}.tab,button{border:0;border-radius:12px;padding:12px 16px;background:#242c47;color:#e9edff;font-weight:700;cursor:pointer}.tab.active,button.primary{background:linear-gradient(100deg,#8d7cff,#45dce9);color:#08101b}.field{width:100%;border:1px solid #333e5e;background:#0c1121;color:#fff;padding:14px;border-radius:12px;outline:none;margin:8px 0 14px}.drop{border:1px dashed #566283;background:#0d1425;border-radius:16px;padding:24px;text-align:center;color:#b8c3e1}.drop input{max-width:100%;margin-top:14px}.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:130px}.feature{display:flex;gap:12px;padding:13px 0;border-bottom:1px solid #29314c}.feature:last-child{border:0}.ico{width:36px;height:36px;border-radius:11px;background:#252c49;display:grid;place-items:center}.feature b{display:block;font-size:13px}.feature small{color:var(--muted)}.status{color:var(--cyan);font-size:12px;margin-top:14px;min-height:18px}.workspace{margin-top:18px}.workspace textarea{min-height:180px;resize:vertical;line-height:1.8}.section-title{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:14px}.tag{font-size:11px;color:var(--cyan);border:1px solid #31616b;padding:5px 9px;border-radius:99px}
+@media(max-width:760px){.wrap{padding:16px}.grid{grid-template-columns:1fr}.hero{padding-top:16px}.panel{padding:18px}.top{margin-bottom:18px}}
+</style>
+</head>
+<body><main class="wrap">
+<header class="top"><div class="brand"><div class="logo">S</div><div>SHEIN RECAP<div style="font-size:9px;color:#9aa6c5;font-weight:600;letter-spacing:2px">AI VIDEO WORKSPACE</div></div></div><span class="pill">BETA · 0.1</span></header>
+<section class="hero"><div class="eyebrow">CREATE · EDIT · EXPORT</div><h1>ဇာတ်လမ်းတွေကို<br><span style="background:linear-gradient(90deg,#a99bff,#5ee7f5);background-clip:text;color:transparent">Recap အဖြစ်ပြောင်းမယ်။</span></h1><p>YouTube Link သို့မဟုတ် ဖုန်းထဲက Video ကို ထည့်ပြီး မြန်မာ Recap အလုပ်လုပ်နိုင်မယ့် Workspace တစ်ခု။</p></section>
+<div class="grid">
+<section class="panel"><h2>ဗီဒီယို ထည့်သွင်းရန်</h2><p class="sub">YouTube link သို့မဟုတ် ဖုန်းထဲက video ကို ရွေးပါ</p>
+<div class="tabs"><button class="tab active" id="ytTab" onclick="mode('yt')">YouTube Link</button><button class="tab" id="upTab" onclick="mode('up')">Video Upload</button></div>
+<div id="ytBox"><label class="sub">YouTube URL</label><input class="field" id="youtube" placeholder="https://www.youtube.com/watch?v=..." /></div>
+<div id="upBox" class="drop" hidden>ဗီဒီယိုဖိုင် ရွေးချယ်ပါ<br><input type="file" id="video" accept="video/*"></div>
+<div class="row"><div><label class="sub">Recap ဘာသာစကား</label><select class="field"><option>မြန်မာ</option></select></div><div><label class="sub">Output Ratio</label><select class="field"><option>9:16 TikTok</option><option>16:9 YouTube</option></select></div></div>
+<button class="primary" style="width:100%" onclick="start()">စတင်ဖန်တီးမယ် ↗</button><div class="status" id="status"></div></section>
+<aside class="panel"><div class="section-title"><h2>Workspace Tools</h2><span class="tag">PLANNED</span></div>
+<div class="feature"><div class="ico">✦</div><div><b>မြန်မာ AI အသံ</b><small>အမျိုးသား / အမျိုးသမီး · Speed · Tone</small></div></div>
+<div class="feature"><div class="ico">▤</div><div><b>စာတန်းထိုး</b><small>မြန်မာ Subtitle workflow</small></div></div>
+<div class="feature"><div class="ico">◉</div><div><b>Blur Tool</b><small>မလိုချင်တဲ့ video အပိုင်းကို ဝါးရန်</small></div></div>
+<div class="feature"><div class="ico">⌁</div><div><b>AI Scene Cut</b><small>Scene ခွဲခြားတည်းဖြတ်ရန်</small></div></div>
+<div class="feature"><div class="ico">▧</div><div><b>Thumbnail Maker</b><small>Recap cover ဖန်တီးရန်</small></div></div>
+</aside></div>
+<section class="panel workspace"><div class="section-title"><h2>Recap Script Editor</h2><span class="tag">MYANMAR</span></div><p class="sub">AI ထုတ်ပေးတဲ့ ဇာတ်လမ်းအကျဉ်းကို ဒီနေရာမှာ ပြင်ဆင်နိုင်မယ်</p><textarea class="field" placeholder="Recap စာသားကို ဒီနေရာမှာ ရေးပါ..."></textarea><div class="row"><button>အသံဖန်တီးရန်</button><button>စာတန်းထိုးထုတ်ရန်</button><button>9:16 Export</button></div></section>
+</main>
+<script>
+let current='yt';
+function mode(m){current=m;document.getElementById('ytBox').hidden=m!=='yt';document.getElementById('upBox').hidden=m!=='up';document.getElementById('ytTab').classList.toggle('active',m==='yt');document.getElementById('upTab').classList.toggle('active',m==='up')}
+async function start(){const s=document.getElementById('status');s.textContent='လုပ်ဆောင်နေသည်...';try{if(current==='up'){const f=document.getElementById('video').files[0];if(!f)throw Error('Video ဖိုင်ရွေးပေးပါ။');const d=new FormData();d.append('video',f);const r=await fetch('/api/upload',{method:'POST',body:d});const j=await r.json();if(!r.ok)throw Error(j.detail||'Upload မအောင်မြင်ပါ');s.textContent='Upload အောင်မြင်ပါပြီ · '+j.filename}else{const d=new FormData();d.append('youtube_url',document.getElementById('youtube').value);const r=await fetch('/api/recap',{method:'POST',body:d});const j=await r.json();if(!r.ok)throw Error(j.detail||'မအောင်မြင်ပါ');s.textContent='Recap စတင်ပါပြီ'}}catch(e){s.textContent=e.message}}
+</script></body></html>
