@@ -1,6 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
-import asyncio, os, subprocess, time
+import asyncio, json, os, subprocess, time
 
 import edge_tts
 import imageio_ffmpeg
@@ -196,7 +196,7 @@ def group_word_boundaries(words):
         joined = "".join(current).strip()
         # Keep captions short and readable; split at punctuation or about 6 words.
         if len(current) >= 6 or any(joined.endswith(mark) for mark in ("။", "?", "!", ",", "၊", ";", ":")):
-            text = " ".join(current).replace(" ၊", "၊").replace(" ။", "။")
+            text = "".join(current).replace(" ၊", "၊").replace(" ။", "။")
             segments.append({"start": round(start, 3), "end": round(max(end, start + 0.35), 3), "text": text})
             current = []
     if current:
@@ -255,45 +255,58 @@ async def thumbnail(file_id: str = Form(...), second: float = Form(1.0)):
     return {"ok": True, "image_url": f"/api/file/{output.name}"}
 
 @app.post("/api/export")
-async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), subtitle_overlay: UploadFile | None = File(None), speech_id: str = Form("")):
+async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
     matches = list(UPLOADS.glob(file_id + ".*"))
     if not matches:
         raise HTTPException(404, "Video မတွေ့ပါ။")
     source = matches[0]
     output = OUTPUTS / f"{uuid4().hex}_vertical.mp4"
     base_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
-    overlay_path = None
-    if subtitle_overlay is not None:
-        overlay_path = OUTPUTS / f"{uuid4().hex}_subtitle.png"
-        with overlay_path.open("wb") as f:
-            while chunk := await subtitle_overlay.read(1024 * 1024):
+    frame_paths = []
+    try:
+        timings = json.loads(subtitle_timings or "[]")
+    except Exception:
+        raise HTTPException(400, "Subtitle timing data မမှန်ပါ။")
+    if len(subtitle_frames) != len(timings):
+        raise HTTPException(400, "Subtitle ပုံနဲ့ အချိန်အချက်အလက် မကိုက်ညီပါ။")
+    if len(timings) > 300:
+        raise HTTPException(400, "Subtitle အပိုင်း ၃၀၀ ထက် မကျော်ရပါ။")
+    for frame in subtitle_frames:
+        path = OUTPUTS / f"{uuid4().hex}_caption.png"
+        with path.open("wb") as f:
+            while chunk := await frame.read(1024 * 1024):
                 f.write(chunk)
-    speech_path = None
-    if speech_id:
-        if not speech_id.isalnum() or len(speech_id) != 32:
-            raise HTTPException(400, "Speech ID မမှန်ပါ။")
-        candidate = OUTPUTS / f"{speech_id}.mp3"
-        if not candidate.is_file():
-            raise HTTPException(404, "ဖန်တီးထားတဲ့ AI အသံဖိုင် မတွေ့ပါ။ အသံပြန်ဖန်တီးပေးပါ။")
-        speech_path = candidate
+        frame_paths.append(path)
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start
     args = ["ffmpeg", "-y", "-i", str(source)]
     audio_input = "0:a?"
     if speech_path:
         args += ["-i", str(speech_path)]
         audio_input = "1:a"
-    if overlay_path:
-        args += ["-i", str(overlay_path)]
+    for path in frame_paths:
+        args += ["-loop", "1", "-framerate", "30", "-i", str(path)]
+    filters = []
     if has_blur:
-        graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[outv]"
-        args += ["-filter_complex", graph, "-map", "[outv]"]
-    elif overlay_path:
-        graph = f"[0:v]{base_filter}[outv]"
-        args += ["-filter_complex", graph, "-map", "[outv]"]
+        filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[v0]")
+        current = "v0"
     else:
-        args += ["-vf", base_filter]
-    args += ["-map", audio_input, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", str(output)]
-    run_cmd(args)
-    if overlay_path:
-        overlay_path.unlink(missing_ok=True)
+        filters.append(f"[0:v]{base_filter}[v0]")
+        current = "v0"
+    for i, timing in enumerate(timings):
+        try:
+            begin = max(0.0, float(timing["start"]))
+            finish = max(begin + 0.05, float(timing["end"]))
+        except Exception:
+            raise HTTPException(400, "Subtitle အချိန်တန်ဖိုး မမှန်ပါ။")
+        next_label = f"v{i + 1}"
+        input_index = (2 if speech_path else 1) + i
+        filters.append(f"[{input_index}:v]format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
+        current = next_label
+    args += ["-filter_complex", ";".join(filters), "-map", f"[{current}]", "-map", audio_input,
+             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
+    try:
+        run_cmd(args)
+    finally:
+        for path in frame_paths:
+            path.unlink(missing_ok=True)
     return {"ok": True, "video_url": f"/api/file/{output.name}", "narration_audio_used": bool(speech_path)}
