@@ -158,8 +158,10 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         raise HTTPException(404, "Video မတွေ့ပါ။")
     source = matches[0]
     output = OUTPUTS / f"{uuid4().hex}_vertical.mp4"
-    vf = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+    base_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
     if blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start:
-        vf += f",split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'"
-    run_cmd(["ffmpeg","-y","-i",str(source),"-vf",vf,"-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+        graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[outv]"
+        run_cmd(["ffmpeg","-y","-i",str(source),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+    else:
+        run_cmd(["ffmpeg","-y","-i",str(source),"-vf",base_filter,"-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
     return {"ok": True, "video_url": f"/api/file/{output.name}"}
