@@ -1,6 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
-import asyncio, os, subprocess
+import asyncio, os, subprocess, time
 
 import edge_tts
 import imageio_ffmpeg
@@ -45,51 +45,49 @@ def get_audio(video: Path, out: Path):
     run_cmd(["ffmpeg", "-y", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(out)])
     return out
 
+def _is_temporary_ai_error(exc):
+    message = str(exc).upper()
+    return any(token in message for token in ("503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED", "500", "INTERNAL", "TIMEOUT", "DEADLINE"))
+
 def transcribe(audio: Path):
-    # Use a fresh client for every model attempt. This prevents a closed or
-    # expired SDK client from poisoning the fallback attempts.
     models = []
-    for model in (
-        TRANSCRIBE_MODEL,
-        os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash"),
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-    ):
+    for model in (TRANSCRIBE_MODEL, os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash"), "gemini-3.5-flash-lite", "gemini-3.8-flash"):
         if model and model not in models:
             models.append(model)
-
     errors = []
     for model in models:
-        client = ai_client()
-        uploaded = None
-        try:
-            uploaded = client.files.upload(file=str(audio))
-            response = client.models.generate_content(
-                model=model,
-                contents=[
+        for attempt, delay in enumerate((0, 2, 5), start=1):
+            if delay:
+                time.sleep(delay)
+            client = ai_client()
+            uploaded = None
+            try:
+                uploaded = client.files.upload(file=str(audio))
+                response = client.models.generate_content(model=model, contents=[
                     uploaded,
                     "Transcribe all spoken words accurately in the original language. Detect the spoken language automatically. Return only the transcript."
-                ],
-            )
-            transcript = (response.text or "").strip()
-            if transcript:
-                return transcript
-            errors.append(f"{model}: empty transcript")
-        except Exception as exc:
-            errors.append(f"{model}: {str(exc)[:220]}")
-        finally:
-            if uploaded is not None:
+                ])
+                transcript = (response.text or "").strip()
+                if transcript:
+                    return transcript
+                errors.append(f"{model}: empty transcript")
+                break
+            except Exception as exc:
+                errors.append(f"{model} attempt {attempt}: {str(exc)[:180]}")
+                if not _is_temporary_ai_error(exc):
+                    break
+            finally:
+                if uploaded is not None:
+                    try:
+                        client.files.delete(name=uploaded.name)
+                    except Exception:
+                        pass
                 try:
-                    client.files.delete(name=uploaded.name)
+                    client.close()
                 except Exception:
                     pass
-            try:
-                client.close()
-            except Exception:
-                pass
-
-    details = " | ".join(errors[-4:])
-    raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini မော်ဒယ်အားလုံး မအောင်မြင်ပါ: {details[:650]}")
+    details = " | ".join(errors[-6:])
+    raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini မော်ဒယ်များ မရနိုင်သေးပါ: {details[:650]}")
 
 def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖွယ်၊ သဘာဝကျတဲ့ စကားပြောဟန်"):
     prompt = f"""အောက်ပါ ရုပ်ရှင်ဇာတ်လမ်း transcript ကို မြန်မာဘာသာနဲ့ TikTok movie recap narration အဖြစ် ပြန်ရေးပါ။
@@ -98,38 +96,34 @@ def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖ
 Transcript:
 {transcript[:90000]}"""
     prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
-
-    # Try fast/low-cost models first, then switch through independent models
-    # with a brand-new SDK client for each attempt.
     models = []
-    for model in (
-        MODEL,
-        os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.8-flash"),
-        "gemini-3.5-flash",
-        "gemini-3.1-flash-lite",
-    ):
+    for model in (MODEL, os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.8-flash"), "gemini-3.5-flash", "gemini-3.1-flash-lite"):
         if model and model not in models:
             models.append(model)
-
     errors = []
     for model in models:
-        client = ai_client()
-        try:
-            response = client.models.generate_content(model=model, contents=prompt_text)
-            script = (response.text or "").strip()
-            if script:
-                return script
-            errors.append(f"{model}: empty response")
-        except Exception as exc:
-            errors.append(f"{model}: {str(exc)[:220]}")
-        finally:
+        for attempt, delay in enumerate((0, 2, 5), start=1):
+            if delay:
+                time.sleep(delay)
+            client = ai_client()
             try:
-                client.close()
-            except Exception:
-                pass
-
-    details = " | ".join(errors[-4:])
-    raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini မော်ဒယ်အားလုံး မအောင်မြင်ပါ: {details[:650]}")
+                response = client.models.generate_content(model=model, contents=prompt_text)
+                script = (response.text or "").strip()
+                if script:
+                    return script
+                errors.append(f"{model}: empty response")
+                break
+            except Exception as exc:
+                errors.append(f"{model} attempt {attempt}: {str(exc)[:180]}")
+                if not _is_temporary_ai_error(exc):
+                    break
+            finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+    details = " | ".join(errors[-6:])
+    raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini မော်ဒယ်များ မရနိုင်သေးပါ: {details[:650]}")
 
 @app.get("/")
 async def home():
