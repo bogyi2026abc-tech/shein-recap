@@ -102,7 +102,7 @@ async def create_recap(youtube_url: str = Form(""), file_id: str = Form(""), sty
         video = matches[0]
         audio = get_audio(video, work / "audio.mp3")
     elif youtube_url:
-        if not re.match(r"^https?://(www\\.)?(youtube\\.com|youtu\\.be)/", youtube_url.strip()):
+        if not (youtube_url.strip().lower().startswith(("https://youtube.com/", "http://youtube.com/", "https://www.youtube.com/", "http://www.youtube.com/", "https://youtu.be/", "http://youtu.be/"))):
             raise HTTPException(400, "YouTube link မှန်ကန်စွာ ထည့်ပေးပါ။")
         downloaded = work / "source.%(ext)s"
         run_cmd(["yt-dlp", "--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "mp3", "-o", str(downloaded), youtube_url.strip()])
