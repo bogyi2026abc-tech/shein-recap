@@ -2,6 +2,7 @@ from pathlib import Path
 from uuid import uuid4
 import json, os, re, shutil, subprocess
 
+import imageio_ffmpeg
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,10 +12,11 @@ BASE = Path(__file__).resolve().parent
 UPLOADS = BASE / "uploads"
 OUTPUTS = BASE / "outputs"
 STATIC = BASE / "static"
+FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
 for folder in (UPLOADS, OUTPUTS, STATIC):
     folder.mkdir(exist_ok=True)
 
-app = FastAPI(title="SHEIN RECAP", version="0.2.0")
+app = FastAPI(title="SHEIN RECAP", version="0.2.1")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 MAX_UPLOAD = 500 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
@@ -26,10 +28,12 @@ def client():
     return OpenAI(api_key=key)
 
 def run_cmd(args):
+    if args and args[0] == "ffmpeg":
+        args = [FFMPEG, *args[1:]]
     try:
         p = subprocess.run(args, capture_output=True, text=True, timeout=900)
     except FileNotFoundError:
-        raise HTTPException(503, "Server မှာ FFmpeg မရှိသေးပါ။ Render မှာ FFmpeg ထည့်သွင်းရန်လိုပါတယ်။")
+        raise HTTPException(503, "လိုအပ်တဲ့ video processing program မတွေ့ပါ။")
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "Video processing အချိန်ကျော်သွားပါတယ်။")
     if p.returncode:
@@ -68,7 +72,7 @@ async def home():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "app": "SHEIN RECAP", "version": "0.2.0", "ffmpeg": shutil.which("ffmpeg") is not None, "ai_ready": bool(os.getenv("OPENAI_API_KEY"))}
+    return {"ok": True, "app": "SHEIN RECAP", "version": "0.2.1", "ffmpeg": Path(FFMPEG).is_file(), "ai_ready": bool(os.getenv("OPENAI_API_KEY"))}
 
 @app.post("/api/upload")
 async def upload_video(video: UploadFile = File(...)):
@@ -105,7 +109,7 @@ async def create_recap(youtube_url: str = Form(""), file_id: str = Form(""), sty
         if not (youtube_url.strip().lower().startswith(("https://youtube.com/", "http://youtube.com/", "https://www.youtube.com/", "http://www.youtube.com/", "https://youtu.be/", "http://youtu.be/"))):
             raise HTTPException(400, "YouTube link မှန်ကန်စွာ ထည့်ပေးပါ။")
         downloaded = work / "source.%(ext)s"
-        run_cmd(["yt-dlp", "--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "mp3", "-o", str(downloaded), youtube_url.strip()])
+        run_cmd(["yt-dlp", "--no-playlist", "--ffmpeg-location", FFMPEG, "-f", "bestaudio/best", "-x", "--audio-format", "mp3", "-o", str(downloaded), youtube_url.strip()])
         audios = list(work.glob("source.*"))
         if not audios:
             raise HTTPException(500, "YouTube အသံကို ရယူမရပါ။ Video ရဲ့ subtitle ရှိ/မရှိ စစ်ဆေးပါ။")
