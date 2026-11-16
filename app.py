@@ -219,16 +219,31 @@ async def thumbnail(file_id: str = Form(...), second: float = Form(1.0)):
     return {"ok": True, "image_url": f"/api/file/{output.name}"}
 
 @app.post("/api/export")
-async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0)):
+async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), subtitle_overlay: UploadFile | None = File(None)):
     matches = list(UPLOADS.glob(file_id + ".*"))
     if not matches:
         raise HTTPException(404, "Video မတွေ့ပါ။")
     source = matches[0]
     output = OUTPUTS / f"{uuid4().hex}_vertical.mp4"
     base_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
-    if blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start:
+    overlay_path = None
+    if subtitle_overlay is not None:
+        overlay_path = OUTPUTS / f"{uuid4().hex}_subtitle.png"
+        with overlay_path.open("wb") as f:
+            while chunk := await subtitle_overlay.read(1024 * 1024):
+                f.write(chunk)
+    has_blur = blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start
+    if overlay_path and has_blur:
+        graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[withblur];[1:v]format=rgba[sub];[withblur][sub]overlay=0:0:shortest=1[outv]"
+        run_cmd(["ffmpeg","-y","-i",str(source),"-i",str(overlay_path),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+    elif overlay_path:
+        graph = f"[0:v]{base_filter}[base];[1:v]format=rgba[sub];[base][sub]overlay=0:0:shortest=1[outv]"
+        run_cmd(["ffmpeg","-y","-i",str(source),"-i",str(overlay_path),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+    elif has_blur:
         graph = f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[outv]"
         run_cmd(["ffmpeg","-y","-i",str(source),"-filter_complex",graph,"-map","[outv]","-map","0:a?","-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
     else:
         run_cmd(["ffmpeg","-y","-i",str(source),"-vf",base_filter,"-c:v","libx264","-preset","veryfast","-crf","23","-c:a","aac","-movflags","+faststart",str(output)])
+    if overlay_path:
+        overlay_path.unlink(missing_ok=True)
     return {"ok": True, "video_url": f"/api/file/{output.name}"}
