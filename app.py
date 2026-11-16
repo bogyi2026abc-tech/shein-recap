@@ -19,7 +19,7 @@ app = FastAPI(title="SHEIN RECAP", version="0.3.0")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 MAX_UPLOAD = 500 * 1024 * 1024
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm"}
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 TRANSCRIBE_MODEL = os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
 
 def ai_client():
@@ -46,52 +46,50 @@ def get_audio(video: Path, out: Path):
     return out
 
 def transcribe(audio: Path):
-    client = ai_client()
-    uploaded = None
-    try:
-        uploaded = client.files.upload(file=str(audio))
-        # Use the documented Generate Content endpoint for the dedicated
-        # transcription model. Some API-key/project configurations return
-        # 404 from the newer Interactions endpoint even when the model exists.
+    # Use a fresh client for every model attempt. This prevents a closed or
+    # expired SDK client from poisoning the fallback attempts.
+    models = []
+    for model in (
+        TRANSCRIBE_MODEL,
+        os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash"),
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+    ):
+        if model and model not in models:
+            models.append(model)
+
+    errors = []
+    for model in models:
+        client = ai_client()
+        uploaded = None
         try:
+            uploaded = client.files.upload(file=str(audio))
             response = client.models.generate_content(
-                model=TRANSCRIBE_MODEL,
+                model=model,
                 contents=[
                     uploaded,
-                    "Transcribe all spoken words accurately. Detect the spoken language automatically. Return only the transcript."
+                    "Transcribe all spoken words accurately in the original language. Detect the spoken language automatically. Return only the transcript."
                 ],
             )
             transcript = (response.text or "").strip()
             if transcript:
                 return transcript
-        except Exception as primary_error:
-            # Compatibility fallback: a general Gemini audio model can still
-            # transcribe the uploaded audio if the dedicated model is unavailable.
+            errors.append(f"{model}: empty transcript")
+        except Exception as exc:
+            errors.append(f"{model}: {str(exc)[:220]}")
+        finally:
+            if uploaded is not None:
+                try:
+                    client.files.delete(name=uploaded.name)
+                except Exception:
+                    pass
             try:
-                response = client.models.generate_content(
-                    model=os.getenv("GEMINI_TRANSCRIBE_FALLBACK_MODEL", "gemini-3.5-flash"),
-                    contents=[
-                        uploaded,
-                        "Transcribe all spoken words accurately in the original language. Return only the transcript."
-                    ],
-                )
-                transcript = (response.text or "").strip()
-                if transcript:
-                    return transcript
-            except Exception as fallback_error:
-                raise RuntimeError(
-                    f"Dedicated transcription failed: {primary_error}; fallback failed: {fallback_error}"
-                ) from fallback_error
-            raise RuntimeError(f"Transcription returned empty text. Primary error: {primary_error}")
-        raise RuntimeError("Gemini returned an empty transcript.")
-    except Exception as exc:
-        raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:700]}")
-    finally:
-        if uploaded is not None:
-            try:
-                client.files.delete(name=uploaded.name)
+                client.close()
             except Exception:
                 pass
+
+    details = " | ".join(errors[-4:])
+    raise HTTPException(502, f"အသံကို စာသားပြောင်းရာမှာ Gemini မော်ဒယ်အားလုံး မအောင်မြင်ပါ: {details[:650]}")
 
 def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖွယ်၊ သဘာဝကျတဲ့ စကားပြောဟန်"):
     prompt = f"""အောက်ပါ ရုပ်ရှင်ဇာတ်လမ်း transcript ကို မြန်မာဘာသာနဲ့ TikTok movie recap narration အဖြစ် ပြန်ရေးပါ။
@@ -99,39 +97,39 @@ def make_script(transcript: str, style: str = "စိတ်ဝင်စားဖ
 ဟန်ပန်: {style}
 Transcript:
 {transcript[:90000]}"""
-    client = ai_client()
-    primary_model = MODEL
-    fallback_model = os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.5-flash")
-    try:
-        prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
+    prompt_text = "သင်သည် မြန်မာဘာသာဖြင့် ရုပ်ရှင်ဇာတ်လမ်းများကို သဘာဝကျကျ ပြောပြနိုင်သော recap စာရေးဆရာဖြစ်သည်။\n\n" + prompt
+
+    # Try fast/low-cost models first, then switch through independent models
+    # with a brand-new SDK client for each attempt.
+    models = []
+    for model in (
+        MODEL,
+        os.getenv("GEMINI_RECAP_FALLBACK_MODEL", "gemini-3.8-flash"),
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+    ):
+        if model and model not in models:
+            models.append(model)
+
+    errors = []
+    for model in models:
+        client = ai_client()
         try:
-            response = client.models.generate_content(model=primary_model, contents=prompt_text)
+            response = client.models.generate_content(model=model, contents=prompt_text)
             script = (response.text or "").strip()
             if script:
                 return script
-            raise RuntimeError("Gemini က Recap စာသားအလွတ် ပြန်ပေးခဲ့ပါတယ်။")
-        except Exception as primary_error:
-            # If the primary model is temporarily overloaded, switch immediately
-            # to a second supported model instead of making the user wait on retries.
-            if fallback_model == primary_model:
-                raise
+            errors.append(f"{model}: empty response")
+        except Exception as exc:
+            errors.append(f"{model}: {str(exc)[:220]}")
+        finally:
             try:
-                response = client.models.generate_content(model=fallback_model, contents=prompt_text)
-                script = (response.text or "").strip()
-                if script:
-                    return script
-                raise RuntimeError("Fallback model က Recap စာသားအလွတ် ပြန်ပေးခဲ့ပါတယ်။")
-            except Exception as fallback_error:
-                raise RuntimeError(
-                    f"Primary model {primary_model} failed: {primary_error}; fallback model {fallback_model} failed: {fallback_error}"
-                ) from fallback_error
-    except Exception as exc:
-        raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini API အမှားဖြစ်နေပါတယ်: {str(exc)[:500]}")
-    finally:
-        try:
-            client.close()
-        except Exception:
-            pass
+                client.close()
+            except Exception:
+                pass
+
+    details = " | ".join(errors[-4:])
+    raise HTTPException(502, f"မြန်မာ Recap ရေးရာမှာ Gemini မော်ဒယ်အားလုံး မအောင်မြင်ပါ: {details[:650]}")
 
 @app.get("/")
 async def home():
