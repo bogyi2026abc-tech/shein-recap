@@ -1,6 +1,6 @@
 from pathlib import Path
 from uuid import uuid4
-import asyncio, json, os, subprocess, time
+import asyncio, json, os, re, subprocess, time
 
 import edge_tts
 import imageio_ffmpeg
@@ -201,14 +201,58 @@ def group_word_boundaries(words):
         current.append(token)
         end = max(end, word["end"])
         joined = "".join(current).strip()
-        # Keep captions short and readable; split at punctuation or about 6 words.
         if len(current) >= 6 or any(joined.endswith(mark) for mark in ("။", "?", "!", ",", "၊", ";", ":")):
             text = "".join(current).replace(" ၊", "၊").replace(" ။", "။")
             segments.append({"start": round(start, 3), "end": round(max(end, start + 0.35), 3), "text": text})
             current = []
     if current:
-        text = " ".join(current).replace(" ၊", "၊").replace(" ။", "။")
+        text = "".join(current).replace(" ၊", "၊").replace(" ။", "။")
         segments.append({"start": round(start, 3), "end": round(max(end, start + 0.45), 3), "text": text})
+    return segments
+
+
+def get_audio_duration(audio: Path) -> float:
+    # Read the actual encoded audio duration with FFmpeg (works for MP3 output).
+    result = subprocess.run(
+        [FFMPEG, "-i", str(audio), "-f", "null", "-"],
+        capture_output=True, text=True, timeout=60
+    )
+    match = re.search(r"Duration: (\\d+):(\\d+):(\\d+(?:\\.\\d+)?)", result.stderr or "")
+    if not match:
+        raise RuntimeError("အသံဖိုင်ကြာချိန်ကို မဖတ်နိုင်ပါ။")
+    hours, minutes, seconds = match.groups()
+    return max(0.1, int(hours) * 3600 + int(minutes) * 60 + float(seconds))
+
+
+def estimate_subtitle_segments(script: str, duration: float):
+    # Burmese Edge TTS voices may omit WordBoundary events. Split readable
+    # caption chunks and distribute them across the real audio duration.
+    clean = re.sub(r"\\s+", " ", script[:12000]).strip()
+    sentences = [s.strip() for s in re.split(r"(?<=[။!?])\\s*", clean) if s.strip()]
+    chunks = []
+    for sentence in sentences or ([clean] if clean else []):
+        while len(sentence) > 52:
+            cut = sentence.rfind(" ", 0, 52)
+            if cut < 20:
+                cut = 52
+            chunks.append(sentence[:cut].strip())
+            sentence = sentence[cut:].strip()
+        if sentence:
+            chunks.append(sentence)
+    if not chunks:
+        raise RuntimeError("Subtitle စာသား မရှိပါ။")
+    weights = [max(1, len(re.sub(r"\\s", "", chunk))) for chunk in chunks]
+    total = sum(weights)
+    segments = []
+    cursor = 0.0
+    for index, (chunk, weight) in enumerate(zip(chunks, weights)):
+        finish = duration if index == len(chunks) - 1 else cursor + duration * weight / total
+        segments.append({
+            "start": round(cursor, 3),
+            "end": round(max(cursor + 0.25, finish), 3),
+            "text": chunk
+        })
+        cursor = finish
     return segments
 
 @app.post("/api/speech")
@@ -234,12 +278,18 @@ async def create_speech(script: str = Form(...), voice: str = Form("my-MM-ThihaN
                     offset = chunk.get("offset", 0) / 10_000_000
                     duration = chunk.get("duration", 0) / 10_000_000
                     words.append({"start": max(0.0, offset), "end": max(0.0, offset + duration), "text": chunk.get("text", "")})
-        if not words:
-            raise RuntimeError("TTS က စာလုံးအချိန်အချက်အလက် မပေးခဲ့ပါ။")
     except Exception as exc:
         output.unlink(missing_ok=True)
-        raise HTTPException(502, f"အသံနဲ့ Subtitle အချိန်ကိုက်ဖန်တီးရာမှာ အမှားဖြစ်နေပါတယ်: {str(exc)[:400]}")
-    segments = group_word_boundaries(words)
+        raise HTTPException(502, f"အသံဖန်တီးရာမှာ အမှားဖြစ်နေပါတယ်: {str(exc)[:400]}")
+    try:
+        if words:
+            segments = group_word_boundaries(words)
+        else:
+            duration = get_audio_duration(output)
+            segments = estimate_subtitle_segments(script, duration)
+    except Exception as exc:
+        output.unlink(missing_ok=True)
+        raise HTTPException(502, f"Subtitle အချိန်သတ်မှတ်ရာမှာ အမှားဖြစ်နေပါတယ်: {str(exc)[:400]}")
     (OUTPUTS / f"{speech_id}.json").write_text(__import__("json").dumps(segments, ensure_ascii=False), encoding="utf-8")
     return {"ok": True, "speech_id": speech_id, "audio_url": f"/api/file/{output.name}", "segments": segments}
 
