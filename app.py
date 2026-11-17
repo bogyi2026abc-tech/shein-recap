@@ -374,7 +374,7 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         filters.append(f"[{input_index}:v]scale=1080:1920:flags=bicubic,format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
         current = next_label
     args += ["-filter_complex_threads", "1", "-filter_complex", ";".join(filters), "-map", f"[{current}]", "-map", audio_input,
-             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
+             "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
     try:
         run_cmd(args)
     finally:
