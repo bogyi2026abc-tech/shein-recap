@@ -217,7 +217,7 @@ def get_audio_duration(audio: Path) -> float:
         [FFMPEG, "-i", str(audio), "-f", "null", "-"],
         capture_output=True, text=True, timeout=60
     )
-    match = re.search(r"Duration: (\\d+):(\\d+):(\\d+(?:\\.\\d+)?)", result.stderr or "")
+    match = re.search(r"Duration: (\d+):(\d+):(\d+(?:\\.\d+)?)", result.stderr or "")
     if not match:
         raise RuntimeError("အသံဖိုင်ကြာချိန်ကို မဖတ်နိုင်ပါ။")
     hours, minutes, seconds = match.groups()
@@ -227,8 +227,8 @@ def get_audio_duration(audio: Path) -> float:
 def estimate_subtitle_segments(script: str, duration: float):
     # Burmese Edge TTS voices may omit WordBoundary events. Split readable
     # caption chunks and distribute them across the real audio duration.
-    clean = re.sub(r"\\s+", " ", script[:12000]).strip()
-    sentences = [s.strip() for s in re.split(r"(?<=[။!?])\\s*", clean) if s.strip()]
+    clean = re.sub(r"\s+", " ", script[:12000]).strip()
+    sentences = [s.strip() for s in re.split(r"(?<=[။!?])\s*", clean) if s.strip()]
     chunks = []
     for sentence in sentences or ([clean] if clean else []):
         while len(sentence) > 52:
@@ -241,7 +241,7 @@ def estimate_subtitle_segments(script: str, duration: float):
             chunks.append(sentence)
     if not chunks:
         raise RuntimeError("Subtitle စာသား မရှိပါ။")
-    weights = [max(1, len(re.sub(r"\\s", "", chunk))) for chunk in chunks]
+    weights = [max(1, len(re.sub(r"\s", "", chunk))) for chunk in chunks]
     total = sum(weights)
     segments = []
     cursor = 0.0
