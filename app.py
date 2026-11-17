@@ -318,13 +318,13 @@ async def thumbnail(file_id: str = Form(...), second: float = Form(1.0)):
     return {"ok": True, "image_url": f"/api/file/{output.name}"}
 
 @app.post("/api/export")
-async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), blur_strength: int = Form(20), audio_mode: str = Form("ai"), original_volume: int = Form(35), ai_volume: int = Form(100), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
+async def export_video(file_id: str = Form(...), mirror: bool = Form(False), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), blur_strength: int = Form(20), audio_mode: str = Form("ai"), original_volume: int = Form(35), ai_volume: int = Form(100), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
     matches = list(UPLOADS.glob(file_id + ".*"))
     if not matches:
         raise HTTPException(404, "Video မတွေ့ပါ။")
     source = matches[0]
     output = OUTPUTS / f"{uuid4().hex}_vertical.mp4"
-    base_filter = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
+    base_filter = ("hflip," if mirror else "") + "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
     # 720p vertical output reduces peak memory on Render Free (512 MB).
     frame_paths = []
     try:
@@ -349,6 +349,8 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w >= 2 and blur_h >= 2 and blur_end > blur_start
     # Blur editor coordinates remain based on the 1080x1920 preview; scale them to 720x1280.
     blur_x_out, blur_y_out = round(blur_x * 2 / 3), round(blur_y * 2 / 3)
+    if mirror and has_blur:
+        blur_x_out = 720 - blur_x_out - round(blur_w * 2 / 3)
     blur_w_out, blur_h_out = max(2, round(blur_w * 2 / 3)), max(2, round(blur_h * 2 / 3))
     audio_mode = audio_mode if audio_mode in ("ai", "original", "mix") else "ai"
     original_volume = max(0, min(100, original_volume)) / 100
