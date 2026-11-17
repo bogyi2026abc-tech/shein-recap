@@ -324,7 +324,8 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         raise HTTPException(404, "Video မတွေ့ပါ။")
     source = matches[0]
     output = OUTPUTS / f"{uuid4().hex}_vertical.mp4"
-    base_filter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+    base_filter = "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280"
+    # 720p vertical output reduces peak memory on Render Free (512 MB).
     frame_paths = []
     try:
         timings = json.loads(subtitle_timings or "[]")
@@ -346,6 +347,9 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
     blur_x = max(0, min(1080 - blur_w, blur_x)) if blur_w else blur_x
     blur_y = max(0, min(1920 - blur_h, blur_y)) if blur_h else blur_y
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w >= 2 and blur_h >= 2 and blur_end > blur_start
+    # Blur editor coordinates remain based on the 1080x1920 preview; scale them to 720x1280.
+    blur_x_out, blur_y_out = round(blur_x * 2 / 3), round(blur_y * 2 / 3)
+    blur_w_out, blur_h_out = max(2, round(blur_w * 2 / 3)), max(2, round(blur_h * 2 / 3))
     audio_mode = audio_mode if audio_mode in ("ai", "original", "mix") else "ai"
     original_volume = max(0, min(100, original_volume)) / 100
     ai_volume = max(0, min(150, ai_volume)) / 100
@@ -377,7 +381,7 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         args += ["-loop", "1", "-framerate", "30", "-i", str(path)]
     filters = list(audio_filters)
     if has_blur:
-        filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur={blur_strength}:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[v0]")
+        filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w_out}:{blur_h_out}:{blur_x_out}:{blur_y_out},boxblur={blur_strength}:2[blur];[base][blur]overlay={blur_x_out}:{blur_y_out}:enable='between(t,{blur_start},{blur_end})'[v0]")
         current = "v0"
     else:
         filters.append(f"[0:v]{base_filter}[v0]")
@@ -390,7 +394,7 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
             raise HTTPException(400, "Subtitle အချိန်တန်ဖိုး မမှန်ပါ။")
         next_label = f"v{i + 1}"
         input_index = (2 if speech_path else 1) + i
-        filters.append(f"[{input_index}:v]scale=1080:1920:flags=bicubic,format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
+        filters.append(f"[{input_index}:v]scale=720:1280:flags=bicubic,format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
         current = next_label
     args += ["-filter_complex_threads", "1", "-filter_complex", ";".join(filters), "-map", f"[{current}]", "-map", audio_input,
              "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
