@@ -2,16 +2,20 @@ from pathlib import Path
 from uuid import uuid4
 import asyncio, json, os, re, subprocess, time
 
-import edge_tts
-import imageio_ffmpeg
-from google import genai
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE = Path(__file__).resolve().parent
 UPLOADS, OUTPUTS, STATIC = BASE / "uploads", BASE / "outputs", BASE / "static"
-FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+FFMPEG = None
+
+def ffmpeg_path():
+    global FFMPEG
+    if FFMPEG is None:
+        import imageio_ffmpeg
+        FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+    return FFMPEG
 for folder in (UPLOADS, OUTPUTS, STATIC):
     folder.mkdir(exist_ok=True)
 
@@ -23,6 +27,7 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
 TRANSCRIBE_MODEL = os.getenv("GEMINI_TRANSCRIBE_MODEL", "gemini-3.5-transcribe")
 
 def ai_client():
+    from google import genai
     key = os.getenv("GEMINI_API_KEY")
     if not key:
         raise HTTPException(503, "GEMINI_API_KEY ကို Render Environment မှာ ထည့်ပေးပါ။ Google AI Studio မှာ အခမဲ့ API Key ရယူနိုင်ပါတယ်။")
@@ -30,7 +35,7 @@ def ai_client():
 
 def run_cmd(args):
     if args and args[0] == "ffmpeg":
-        args = [FFMPEG, *args[1:]]
+        args = [ffmpeg_path(), *args[1:]]
     try:
         p = subprocess.run(args, capture_output=True, text=True, timeout=900)
     except FileNotFoundError:
@@ -214,7 +219,7 @@ def group_word_boundaries(words):
 def get_audio_duration(audio: Path) -> float:
     # Read the actual encoded audio duration with FFmpeg (works for MP3 output).
     result = subprocess.run(
-        [FFMPEG, "-i", str(audio), "-f", "null", "-"],
+        [ffmpeg_path(), "-i", str(audio), "-f", "null", "-"],
         capture_output=True, text=True, timeout=60
     )
     match = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr or "")
@@ -269,6 +274,7 @@ async def create_speech(script: str = Form(...), voice: str = Form("my-MM-ThihaN
     rate = f"{round((speed - 1) * 100):+d}%"
     words = []
     try:
+        import edge_tts
         communicate = edge_tts.Communicate(script[:12000], voice, rate=rate)
         with output.open("wb") as audio_file:
             async for chunk in communicate.stream():
