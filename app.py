@@ -312,7 +312,7 @@ async def thumbnail(file_id: str = Form(...), second: float = Form(1.0)):
     return {"ok": True, "image_url": f"/api/file/{output.name}"}
 
 @app.post("/api/export")
-async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
+async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), blur_strength: int = Form(20), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
     matches = list(UPLOADS.glob(file_id + ".*"))
     if not matches:
         raise HTTPException(404, "Video မတွေ့ပါ။")
@@ -334,7 +334,12 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
             while chunk := await frame.read(1024 * 1024):
                 f.write(chunk)
         frame_paths.append(path)
-    has_blur = blur_x >= 0 and blur_y >= 0 and blur_w > 0 and blur_h > 0 and blur_end > blur_start
+    blur_strength = max(1, min(40, blur_strength))
+    blur_w = max(0, min(1080, blur_w))
+    blur_h = max(0, min(1920, blur_h))
+    blur_x = max(0, min(1080 - blur_w, blur_x)) if blur_w else blur_x
+    blur_y = max(0, min(1920 - blur_h, blur_y)) if blur_h else blur_y
+    has_blur = blur_x >= 0 and blur_y >= 0 and blur_w >= 2 and blur_h >= 2 and blur_end > blur_start
     args = ["ffmpeg", "-y", "-i", str(source)]
     speech_path = OUTPUTS / f"{speech_id}.mp3" if speech_id else None
     audio_input = "0:a?"
@@ -347,7 +352,7 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
         args += ["-loop", "1", "-framerate", "30", "-i", str(path)]
     filters = []
     if has_blur:
-        filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur=20:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[v0]")
+        filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur={blur_strength}:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[v0]")
         current = "v0"
     else:
         filters.append(f"[0:v]{base_filter}[v0]")
