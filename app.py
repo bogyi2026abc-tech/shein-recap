@@ -379,8 +379,17 @@ async def export_video(file_id: str = Form(...), mirror: bool = Form(False), blu
         else:
             audio_filters.append(f"[1:a]volume={ai_volume:.2f}[aout]")
         audio_input = "[aout]"
-    for path in frame_paths:
-        args += ["-loop", "1", "-framerate", "30", "-i", str(path)]
+    # Keep each still subtitle input alive only for its own display interval.
+    # Infinite looping all PNG inputs until the full video ends can exhaust Render's 512MB RAM.
+    for path, timing in zip(frame_paths, timings):
+        try:
+            begin = max(0.0, float(timing["start"]))
+            finish = max(begin + 0.05, float(timing["end"]))
+        except Exception:
+            raise HTTPException(400, "Subtitle အချိန်တန်ဖိုး မမှန်ပါ။")
+        duration = max(0.05, finish - begin)
+        args += ["-threads", "1", "-itsoffset", f"{begin:.3f}", "-loop", "1",
+                 "-framerate", "30", "-t", f"{duration:.3f}", "-i", str(path)]
     filters = list(audio_filters)
     if has_blur:
         filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w_out}:{blur_h_out}:{blur_x_out}:{blur_y_out},boxblur={blur_strength}:2[blur];[base][blur]overlay={blur_x_out}:{blur_y_out}:enable='between(t,{blur_start},{blur_end})'[v0]")
@@ -396,7 +405,7 @@ async def export_video(file_id: str = Form(...), mirror: bool = Form(False), blu
             raise HTTPException(400, "Subtitle အချိန်တန်ဖိုး မမှန်ပါ။")
         next_label = f"v{i + 1}"
         input_index = (2 if speech_path else 1) + i
-        filters.append(f"[{input_index}:v]scale=720:1280:flags=bicubic,format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
+        filters.append(f"[{input_index}:v]scale=720:1280:flags=bicubic,format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:eof_action=pass:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
         current = next_label
     args += ["-filter_complex_threads", "1", "-filter_complex", ";".join(filters), "-map", f"[{current}]", "-map", audio_input,
              "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
