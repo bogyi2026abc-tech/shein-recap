@@ -143,7 +143,7 @@ async def home():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "app": "SHEIN RECAP", "version": "0.3.0", "ffmpeg": Path(FFMPEG).is_file(), "ai_ready": bool(os.getenv("GEMINI_API_KEY")), "ai_provider": "Google Gemini Free Tier", "tts": "Microsoft Edge Burmese voices"}
+    return {"ok": True, "app": "SHEIN RECAP", "version": "0.3.0", "ffmpeg": Path(ffmpeg_path()).is_file(), "ai_ready": bool(os.getenv("GEMINI_API_KEY")), "ai_provider": "Google Gemini Free Tier", "tts": "Microsoft Edge Burmese voices"}
 
 @app.post("/api/upload")
 async def upload_video(video: UploadFile = File(...)):
@@ -179,7 +179,7 @@ async def create_recap(youtube_url: str = Form(""), file_id: str = Form(""), sty
         if not youtube_url.strip().lower().startswith(("https://youtube.com/", "http://youtube.com/", "https://www.youtube.com/", "http://www.youtube.com/", "https://youtu.be/", "http://youtu.be/")):
             raise HTTPException(400, "YouTube link မှန်ကန်စွာ ထည့်ပေးပါ။")
         downloaded = work / "source.%(ext)s"
-        run_cmd(["yt-dlp", "--no-playlist", "--ffmpeg-location", FFMPEG, "-f", "bestaudio/best", "-x", "--audio-format", "mp3", "-o", str(downloaded), youtube_url.strip()])
+        run_cmd(["yt-dlp", "--no-playlist", "--ffmpeg-location", ffmpeg_path(), "-f", "bestaudio/best", "-x", "--audio-format", "mp3", "-o", str(downloaded), youtube_url.strip()])
         audios = list(work.glob("source.*"))
         if not audios:
             raise HTTPException(500, "YouTube အသံကို ရယူမရပါ။")
