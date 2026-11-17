@@ -371,10 +371,10 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
             raise HTTPException(400, "Subtitle အချိန်တန်ဖိုး မမှန်ပါ။")
         next_label = f"v{i + 1}"
         input_index = (2 if speech_path else 1) + i
-        filters.append(f"[{input_index}:v]format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
+        filters.append(f"[{input_index}:v]scale=1080:1920:flags=bicubic,format=rgba[cap{i}];[{current}][cap{i}]overlay=0:0:enable='between(t,{begin:.3f},{finish:.3f})'[{next_label}]")
         current = next_label
-    args += ["-filter_complex", ";".join(filters), "-map", f"[{current}]", "-map", audio_input,
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
+    args += ["-filter_complex_threads", "1", "-filter_complex", ";".join(filters), "-map", f"[{current}]", "-map", audio_input,
+             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-movflags", "+faststart", "-shortest", str(output)]
     try:
         run_cmd(args)
     finally:
