@@ -217,7 +217,7 @@ def get_audio_duration(audio: Path) -> float:
         [FFMPEG, "-i", str(audio), "-f", "null", "-"],
         capture_output=True, text=True, timeout=60
     )
-    match = re.search(r"Duration: (\d+):(\d+):(\d+(?:\\.\d+)?)", result.stderr or "")
+    match = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr or "")
     if not match:
         raise RuntimeError("အသံဖိုင်ကြာချိန်ကို မဖတ်နိုင်ပါ။")
     hours, minutes, seconds = match.groups()
