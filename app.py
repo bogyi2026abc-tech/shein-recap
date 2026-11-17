@@ -318,7 +318,7 @@ async def thumbnail(file_id: str = Form(...), second: float = Form(1.0)):
     return {"ok": True, "image_url": f"/api/file/{output.name}"}
 
 @app.post("/api/export")
-async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), blur_strength: int = Form(20), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
+async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y: int = Form(-1), blur_w: int = Form(0), blur_h: int = Form(0), blur_start: float = Form(0), blur_end: float = Form(0), blur_strength: int = Form(20), audio_mode: str = Form("ai"), original_volume: int = Form(35), ai_volume: int = Form(100), subtitle_frames: list[UploadFile] = File(default=[]), subtitle_timings: str = Form("[]"), speech_id: str = Form("")):
     matches = list(UPLOADS.glob(file_id + ".*"))
     if not matches:
         raise HTTPException(404, "Video မတွေ့ပါ။")
@@ -346,17 +346,36 @@ async def export_video(file_id: str = Form(...), blur_x: int = Form(-1), blur_y:
     blur_x = max(0, min(1080 - blur_w, blur_x)) if blur_w else blur_x
     blur_y = max(0, min(1920 - blur_h, blur_y)) if blur_h else blur_y
     has_blur = blur_x >= 0 and blur_y >= 0 and blur_w >= 2 and blur_h >= 2 and blur_end > blur_start
+    audio_mode = audio_mode if audio_mode in ("ai", "original", "mix") else "ai"
+    original_volume = max(0, min(100, original_volume)) / 100
+    ai_volume = max(0, min(150, ai_volume)) / 100
     args = ["ffmpeg", "-y", "-i", str(source)]
-    speech_path = OUTPUTS / f"{speech_id}.mp3" if speech_id else None
-    audio_input = "0:a?"
-    if speech_path:
-        if not speech_path.is_file():
+    speech_path = OUTPUTS / f"{speech_id}.mp3" if speech_id and audio_mode in ("ai", "mix") else None
+    if audio_mode in ("ai", "mix"):
+        if not speech_path or not speech_path.is_file():
             raise HTTPException(404, "AI အသံဖိုင် မတွေ့ပါ။ အသံကို ပြန်ဖန်တီးပေးပါ။")
         args += ["-i", str(speech_path)]
-        audio_input = "1:a"
+    source_probe = subprocess.run([ffmpeg_path(), "-i", str(source)], capture_output=True, text=True, timeout=30)
+    has_original_audio = "Audio:" in (source_probe.stderr or "")
+    audio_filters = []
+    if audio_mode == "original":
+        if has_original_audio:
+            audio_filters.append(f"[0:a]volume={original_volume:.2f}[aout]")
+            audio_input = "[aout]"
+        else:
+            raise HTTPException(400, "မူရင်းဗီဒီယိုမှာ အသံလမ်းကြောင်း မတွေ့ပါ။ AI အသံ သို့မဟုတ် အသံနှစ်မျိုး ရွေးပါ။")
+    elif audio_mode == "ai":
+        audio_filters.append(f"[1:a]volume={ai_volume:.2f}[aout]")
+        audio_input = "[aout]"
+    else:
+        if has_original_audio:
+            audio_filters.extend([f"[0:a]volume={original_volume:.2f}[orig]", f"[1:a]volume={ai_volume:.2f}[voice]", "[orig][voice]amix=inputs=2:duration=longest:dropout_transition=2[aout]"])
+        else:
+            audio_filters.append(f"[1:a]volume={ai_volume:.2f}[aout]")
+        audio_input = "[aout]"
     for path in frame_paths:
         args += ["-loop", "1", "-framerate", "30", "-i", str(path)]
-    filters = []
+    filters = list(audio_filters)
     if has_blur:
         filters.append(f"[0:v]{base_filter},split[base][tmp];[tmp]crop={blur_w}:{blur_h}:{blur_x}:{blur_y},boxblur={blur_strength}:2[blur];[base][blur]overlay={blur_x}:{blur_y}:enable='between(t,{blur_start},{blur_end})'[v0]")
         current = "v0"
