@@ -145,6 +145,20 @@ async def home():
 async def health():
     return {"ok": True, "app": "SHEIN RECAP", "version": "0.3.0", "ffmpeg": Path(ffmpeg_path()).is_file(), "ai_ready": bool(os.getenv("GEMINI_API_KEY")), "ai_provider": "Google Gemini Free Tier", "tts": "Microsoft Edge Burmese voices"}
 
+@app.post("/api/melolo/check")
+async def check_melolo_link(url: str = Form("")):
+    from urllib.parse import urlparse
+    parsed = urlparse((url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not (host == "melolo.org" or host.endswith(".melolo.org")):
+        raise HTTPException(400, "Melolo Share Link မှန်ကန်စွာ ထည့်ပေးပါ။")
+    return {
+        "ok": True,
+        "imported": False,
+        "message": "ဒီ Link က Melolo ဇာတ်လမ်းစာမျက်နှာ Link ဖြစ်ပြီး MP4 ဖိုင်တိုက်ရိုက်လင့်ခ် မဟုတ်ပါ။ App က ခွင့်ပြုထားတဲ့ Video Export မရှိသေးလို့ တိုက်ရိုက် Import မလုပ်နိုင်ပါ။ ရယူခွင့်ရှိတဲ့ MP4 ဖိုင်ကို Video Upload မှတစ်ဆင့် ထည့်ပေးပါ။"
+    }
+
+
 @app.post("/api/upload")
 async def upload_video(video: UploadFile = File(...)):
     suffix = Path(video.filename or "").suffix.lower()
